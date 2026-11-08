@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>reconbook review</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; background: #f6f7f9; color: #1a1d24; margin: 0; padding: 24px; }
+  h1 { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
+  h2 { font-size: 14px; color: #444; margin: 28px 0 10px; }
+  .sub { color: #666; font-size: 13px; margin-bottom: 20px; }
+  .reviewer { margin-bottom: 20px; font-size: 13px; }
+  .reviewer input { padding: 5px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; width: 200px; }
+  .stats { display: flex; gap: 14px; margin-bottom: 8px; flex-wrap: wrap; }
+  .card { background: #fff; border: 1px solid #e3e5e8; border-radius: 8px; padding: 14px 20px; min-width: 100px; }
+  .card .n { font-size: 24px; font-weight: 700; }
+  .card .label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.04em; }
+  .pending .n { color: #b8860b; }
+  .approved .n { color: #1a7f37; }
+  .rejected .n { color: #cf222e; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 20px; background: #fff; border: 1px solid #e3e5e8; border-radius: 8px; overflow: hidden; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid #edeff2; vertical-align: top; }
+  th { color: #666; font-weight: 500; font-size: 11px; text-transform: uppercase; background: #fafbfc; }
+  tr:last-child td { border-bottom: none; }
+  .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .badge.high { background: #d9f2e3; color: #1a7f37; }
+  .badge.medium { background: #fff3cd; color: #946200; }
+  .badge.low { background: #fde2e1; color: #cf222e; }
+  .explanation { color: #444; max-width: 420px; }
+  button { background: #1a1d24; color: #fff; border: none; border-radius: 4px; padding: 5px 10px; cursor: pointer; font-size: 12px; margin-right: 4px; }
+  button.reject { background: #cf222e; }
+  button:hover { opacity: 0.85; }
+  .empty { color: #888; font-style: italic; padding: 10px 0; }
+</style>
+</head>
+<body>
+  <h1>reconbook</h1>
+  <div class="sub">POS ↔ bank reconciliation review queue</div>
+
+  <div class="reviewer">
+    Reviewing as: <input id="reviewerName" placeholder="your name" />
+  </div>
+
+  <div class="stats" id="stats"></div>
+
+  <h2>Pending review</h2>
+  <table id="pendingTable">
+    <thead><tr><th>Bank Entry</th><th>Kind</th><th>Confidence</th><th>Discrepancy</th><th>Explanation</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <h2>Unmatched bank deposits (no fitting combination of sales found)</h2>
+  <table id="unmatchedBankTable">
+    <thead><tr><th>Entry ID</th><th>Date</th><th>Amount</th><th>Memo</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <h2>Unmatched POS sales (not claimed by any deposit)</h2>
+  <table id="unmatchedPOSTable">
+    <thead><tr><th>Transaction ID</th><th>Date</th><th>Amount</th><th>Description</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <h2>Decided</h2>
+  <table id="decidedTable">
+    <thead><tr><th>Bank Entry</th><th>Status</th><th>Reviewer</th><th>Reviewed At</th><th>Note</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+<script>
+function money(cents) {
+  const neg = cents < 0;
+  const abs = Math.abs(cents);
+  return (neg ? '-' : '') + '$' + (abs / 100).toFixed(2);
+}
+
+function getReviewer() {
+  return document.getElementById('reviewerName').value.trim();
+}
+
+function setEmpty(tbody, colspan, text) {
+  tbody.innerHTML = `<tr><td colspan="${colspan}" class="empty">${text}</td></tr>`;
+}
+
+async function decide(bankEntryId, decision) {
+  const reviewer = getReviewer();
+  if (!reviewer) { alert('Enter your name in "Reviewing as" first.'); return; }
+  let reason = '';
+  if (decision === 'reject') {
+    reason = prompt('Reason for rejecting this match?') || '';
+    if (!reason) return;
+  }
+  const resp = await fetch('/api/decide', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bank_entry_id: bankEntryId, decision, reviewer, reason }),
+  });
+  if (!resp.ok) {
+    alert('Error: ' + (await resp.text()));
+  }
+  refresh();
+}
+window.decide = decide;
+
+async function refresh() {
+  const savedReviewer = localStorage.getItem('reconbook_reviewer');
+  if (savedReviewer && !document.getElementById('reviewerName').value) {
+    document.getElementById('reviewerName').value = savedReviewer;
+  }
+  document.getElementById('reviewerName').addEventListener('change', e => {
+    localStorage.setItem('reconbook_reviewer', e.target.value);
+  });
+
+  const [summary, items, unmatched] = await Promise.all([
+    fetch('/api/summary').then(r => r.json()),
+    fetch('/api/items').then(r => r.json()),
+    fetch('/api/unmatched').then(r => r.json()),
+  ]);
+
+  const statsEl = document.getElementById('stats');
+  statsEl.innerHTML = '';
+  for (const [cls, label, key] of [['pending', 'Pending', 'Pending'], ['approved', 'Approved', 'Approved'], ['rejected', 'Rejected', 'Rejected']]) {
+    const card = document.createElement('div');
+    card.className = 'card ' + cls;
+    card.innerHTML = `<div class="n">${summary[key] || 0}</div><div class="label">${label}</div>`;
+    statsEl.appendChild(card);
+  }
+
+  const pendingBody = document.querySelector('#pendingTable tbody');
+  const pending = (items || []).filter(i => i.Status === 'pending');
+  if (pending.length === 0) {
+    setEmpty(pendingBody, 6, 'Nothing pending — everything has been reviewed.');
+  } else {
+    pendingBody.innerHTML = '';
+    for (const it of pending) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${it.BankEntryID}<br><small>${it.POSTransactionIDs.join(', ')}</small></td>
+        <td>${it.Kind}</td>
+        <td><span class="badge ${it.Confidence}">${it.Confidence}</span></td>
+        <td>${money(it.DiscrepancyCents)}</td>
+        <td class="explanation">${it.Explanation}</td>
+        <td><button onclick="decide('${it.BankEntryID}','approve')">Approve</button><button class="reject" onclick="decide('${it.BankEntryID}','reject')">Reject</button></td>`;
+      pendingBody.appendChild(tr);
+    }
+  }
+
+  const decidedBody = document.querySelector('#decidedTable tbody');
+  const decided = (items || []).filter(i => i.Status !== 'pending');
+  if (decided.length === 0) {
+    setEmpty(decidedBody, 5, 'No decisions recorded yet.');
+  } else {
+    decidedBody.innerHTML = '';
+    for (const it of decided) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${it.BankEntryID}</td><td>${it.Status}</td><td>${it.Reviewer}</td><td>${it.ReviewedAt ? new Date(it.ReviewedAt).toLocaleString() : ''}</td><td>${it.RejectionReason || ''}</td>`;
+      decidedBody.appendChild(tr);
+    }
+  }
+
+  const bankBody = document.querySelector('#unmatchedBankTable tbody');
+  const bankList = (unmatched && unmatched.bank) || [];
+  if (bankList.length === 0) {
+    setEmpty(bankBody, 4, 'None — every deposit matched or is pending review.');
+  } else {
+    bankBody.innerHTML = '';
+    for (const b of bankList) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${b.ID}</td><td>${b.Date.slice(0,10)}</td><td>${money(b.AmountCents)}</td><td>${b.Memo}</td>`;
+      bankBody.appendChild(tr);
+    }
+  }
+
+  const posBody = document.querySelector('#unmatchedPOSTable tbody');
+  const posList = (unmatched && unmatched.pos) || [];
+  if (posList.length === 0) {
+    setEmpty(posBody, 4, 'None — every sale is accounted for.');
+  } else {
+    posBody.innerHTML = '';
+    for (const p of posList) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${p.ID}</td><td>${p.Date.slice(0,10)}</td><td>${money(p.AmountCents)}</td><td>${p.Description}</td>`;
+      posBody.appendChild(tr);
+    }
+  }
+}
+
+refresh();
+setInterval(refresh, 4000);
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+transaction_id,date,amount,description
+p1,2026-02-01,25.00,Sale - coffee and pastry
+p2,2026-02-01,40.00,Sale - lunch order
+p3,2026-02-01,15.50,Sale - single item
+p4,2026-02-03,60.00,Sale - catering order
+r1,2026-02-03,-20.00,Refund on p-earlier
+p5,2026-02-05,12.00,Sale - coffee

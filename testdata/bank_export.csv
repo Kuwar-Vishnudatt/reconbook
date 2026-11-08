@@ -1,0 +1,5 @@
+entry_id,date,amount,memo
+b1,2026-02-02,77.27,Card batch deposit
+b2,2026-02-03,57.96,Card batch deposit
+b4,2026-02-04,-19.72,Refund debit
+b3,2026-02-04,999.00,Unknown deposit - investigate
